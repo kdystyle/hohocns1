@@ -1,0 +1,6 @@
+{
+  "name": "Jjukkumi Bokkeum 3D Showcase",
+  "description": "Interactive 3D culinary showcase of sizzling Korean spicy stir-fried webfoot octopus (Jjukkumi-bokkeum) on a cast-iron skillet with raw Grade A inspection, 5-minute flame cook simulation, camera presets, and Web Audio sizzle synthesis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
