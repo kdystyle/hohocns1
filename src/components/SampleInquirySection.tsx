@@ -1,11 +1,26 @@
 import { type FormEvent, useEffect, useState } from 'react';
-import { CheckCircle2, PhoneCall, Send, X } from 'lucide-react';
+import {
+  Check,
+  CheckCircle2,
+  Copy,
+  Loader2,
+  MessageSquareText,
+  PhoneCall,
+  Send,
+  X,
+} from 'lucide-react';
 
 interface SubmittedRequest {
   storeInfo: string;
   phone: string;
   businessType: string;
+  smsBody: string;
+  smsHref: string;
+  sheetSent: boolean;
 }
+
+const CONTACT_PHONE = '010-9254-8401';
+const COMPANY_ADDRESS = '인천시 서구 가정로 77번길 57, 1층';
 
 const BUSINESS_TYPES = [
   '호프 · 포차 · 주점',
@@ -21,11 +36,34 @@ function formatKoreanPhone(raw: string): string {
   return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
 }
 
+function buildSmsDetails(storeInfo: string, phone: string, businessType: string) {
+  const smsBody = [
+    '[호호C&S 쭈꾸미 무료 샘플 신청]',
+    `매장명/지역: ${storeInfo}`,
+    `연락처: ${phone}`,
+    `현재 업종: ${businessType}`,
+  ].join('\n');
+
+  const isIOS =
+    typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const sep = isIOS ? '&' : '?';
+  const smsHref = `sms:${CONTACT_PHONE}${sep}body=${encodeURIComponent(smsBody)}`;
+
+  return { smsBody, smsHref };
+}
+
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 export function SampleInquirySection() {
   const [storeInfo, setStoreInfo] = useState('');
   const [phone, setPhone] = useState('');
   const [businessType, setBusinessType] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [submitted, setSubmitted] = useState<SubmittedRequest | null>(null);
 
   useEffect(() => {
@@ -39,8 +77,20 @@ export function SampleInquirySection() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [submitted]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleCopyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable in restricted context
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     const trimmedStore = storeInfo.trim();
     const digits = phone.replace(/\D/g, '');
     const trimmedBiz = businessType.trim();
@@ -59,14 +109,55 @@ export function SampleInquirySection() {
     }
 
     setFormError(null);
+    setIsSubmitting(true);
+
+    const formattedPhone = formatKoreanPhone(digits);
+    const { smsBody, smsHref } = buildSmsDetails(trimmedStore, formattedPhone, trimmedBiz);
+
+    // 1. Send to Google Sheets Apps Script Webhook if configured
+    const webhookUrl = (import.meta.env.VITE_GOOGLE_SHEET_WEBHOOK_URL as string | undefined)?.trim();
+    let sheetSent = false;
+
+    if (webhookUrl) {
+      try {
+        await fetch(webhookUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            submittedAt: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }),
+            storeInfo: trimmedStore,
+            phone: formattedPhone,
+            businessType: trimmedBiz,
+            source: '호호C&S 쭈꾸미 전수창업 랜딩페이지',
+          }),
+        });
+        sheetSent = true;
+      } catch {
+        sheetSent = false;
+      }
+    }
+
+    setIsSubmitting(false);
+    setCopied(false);
     setSubmitted({
       storeInfo: trimmedStore,
-      phone: formatKoreanPhone(digits),
+      phone: formattedPhone,
       businessType: trimmedBiz,
+      smsBody,
+      smsHref,
+      sheetSent,
     });
     setStoreInfo('');
     setPhone('');
     setBusinessType('');
+
+    // 2. On standalone mobile browsers, open pre-filled SMS composer directly
+    if (isMobileDevice() && window.self === window.top) {
+      window.location.href = smsHref;
+    }
   };
 
   return (
@@ -99,24 +190,28 @@ export function SampleInquirySection() {
 
               {/* Direct Contact Table */}
               <dl className="mt-7 divide-y divide-white/10 border-y border-white/10 text-sm">
-                <div className="flex items-center justify-between py-3.5">
-                  <dt className="text-stone-400">업체명</dt>
-                  <dd className="font-semibold text-stone-100">호호C&amp;S</dd>
+                <div className="flex items-center justify-between gap-4 py-3.5">
+                  <dt className="shrink-0 text-stone-400">업체명</dt>
+                  <dd className="text-right font-semibold text-stone-100">호호C&amp;S</dd>
                 </div>
-                <div className="flex items-center justify-between py-3.5">
-                  <dt className="text-stone-400">담당자</dt>
-                  <dd className="font-semibold text-stone-100">대표 고유권</dd>
+                <div className="flex items-center justify-between gap-4 py-3.5">
+                  <dt className="shrink-0 text-stone-400">담당자</dt>
+                  <dd className="text-right font-semibold text-stone-100">대표 고유권</dd>
                 </div>
-                <div className="flex items-center justify-between py-3.5">
-                  <dt className="text-stone-400">직통 문의전화</dt>
-                  <dd>
+                <div className="flex items-center justify-between gap-4 py-3.5">
+                  <dt className="shrink-0 text-stone-400">직통 문의전화</dt>
+                  <dd className="text-right">
                     <a
-                      href="tel:010-9254-8401"
+                      href={`tel:${CONTACT_PHONE}`}
                       className="font-mono text-base font-bold tabular-nums text-orange-400 underline-offset-4 hover:text-orange-300 hover:underline"
                     >
-                      010-9254-8401
+                      {CONTACT_PHONE}
                     </a>
                   </dd>
+                </div>
+                <div className="flex items-center justify-between gap-4 py-3.5">
+                  <dt className="shrink-0 text-stone-400">주소</dt>
+                  <dd className="text-right font-medium text-stone-200">{COMPANY_ADDRESS}</dd>
                 </div>
               </dl>
 
@@ -131,11 +226,11 @@ export function SampleInquirySection() {
             {/* One-Tap Mobile Direct Call CTA */}
             <div className="mt-8 pt-2">
               <a
-                href="tel:010-9254-8401"
+                href={`tel:${CONTACT_PHONE}`}
                 className="inline-flex min-h-[48px] w-full items-center justify-center gap-2.5 rounded-xl border border-orange-400/50 bg-orange-500/15 px-5 py-3 text-sm font-bold text-orange-200 transition-colors hover:border-orange-400 hover:bg-orange-500/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 whitespace-nowrap sm:text-base"
               >
                 <PhoneCall className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="font-mono tabular-nums">010-9254-8401</span>
+                <span className="font-mono tabular-nums">{CONTACT_PHONE}</span>
                 <span>바로 전화 상담</span>
               </a>
             </div>
@@ -152,7 +247,7 @@ export function SampleInquirySection() {
                 무료 샘플 신청서 작성
               </h3>
               <p className="mt-1.5 text-sm text-stone-400">
-                간단한 매장 정보만 입력하시면 선착순 확인 후 빠르게 연락드리겠습니다.
+                신청 시 접수 내역이 자동 기록되며, 모바일에서는 대표님 직통 문자 전송으로 바로 이어집니다.
               </p>
 
               <div className="mt-7 space-y-5">
@@ -238,10 +333,20 @@ export function SampleInquirySection() {
             <div className="mt-8 pt-2">
               <button
                 type="submit"
-                className="inline-flex min-h-[50px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 via-orange-600 to-orange-500 px-6 py-3 text-sm font-bold text-white shadow-[0_8px_28px_rgba(234,88,12,0.38)] transition-all duration-150 hover:brightness-110 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 whitespace-nowrap sm:text-base"
+                disabled={isSubmitting}
+                className="inline-flex min-h-[50px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 via-orange-600 to-orange-500 px-6 py-3 text-sm font-bold text-white shadow-[0_8px_28px_rgba(234,88,12,0.38)] transition-all duration-150 hover:brightness-110 active:scale-[0.99] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 whitespace-nowrap sm:text-base"
               >
-                <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>선착순 10곳 무료 샘플 신청하기</span>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                    <span>접수 처리 중...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>선착순 10곳 무료 샘플 신청하기</span>
+                  </>
+                )}
               </button>
               <p className="mt-3 text-center text-xs text-stone-500">
                 가맹 강요 없이 샘플 시식 및 원물 단가 안내만 깔끔하게 진행됩니다.
@@ -251,7 +356,7 @@ export function SampleInquirySection() {
         </div>
       </div>
 
-      {/* Confirmation Modal Popup */}
+      {/* Confirmation Modal Popup with SMS Quick-Send & Copy */}
       {submitted && (
         <div
           role="dialog"
@@ -277,39 +382,61 @@ export function SampleInquirySection() {
             </div>
 
             <p className="mt-3 text-sm leading-relaxed text-stone-300">
-              호호C&amp;S <strong className="text-stone-100">대표 고유권</strong> 담당자가 접수 내용을 확인한 뒤, 기재하신 연락처로 샘플 발송 일정을 안내드리겠습니다.
+              호호C&amp;S <strong className="text-stone-100">대표 고유권</strong> 담당자가 접수 내용을 확인한 뒤 빠르게 안내드리겠습니다. 더 빠른 확인을 원하시면 아래 버튼으로 문자를 바로 보내주세요.
             </p>
 
             <dl className="mt-5 divide-y divide-white/10 rounded-xl border border-white/10 bg-[#0b0c10] px-4 text-sm">
-              <div className="flex items-center justify-between py-2.5">
-                <dt className="text-stone-400">매장명 / 지역</dt>
-                <dd className="font-medium text-stone-100">{submitted.storeInfo}</dd>
+              <div className="flex items-center justify-between gap-4 py-2.5">
+                <dt className="shrink-0 text-stone-400">매장명 / 지역</dt>
+                <dd className="text-right font-medium text-stone-100">{submitted.storeInfo}</dd>
               </div>
-              <div className="flex items-center justify-between py-2.5">
-                <dt className="text-stone-400">연락처</dt>
+              <div className="flex items-center justify-between gap-4 py-2.5">
+                <dt className="shrink-0 text-stone-400">연락처</dt>
                 <dd className="font-mono tabular-nums text-stone-100">{submitted.phone}</dd>
               </div>
-              <div className="flex items-center justify-between py-2.5">
-                <dt className="text-stone-400">현재 업종</dt>
-                <dd className="font-medium text-stone-100">{submitted.businessType}</dd>
+              <div className="flex items-center justify-between gap-4 py-2.5">
+                <dt className="shrink-0 text-stone-400">현재 업종</dt>
+                <dd className="text-right font-medium text-stone-100">{submitted.businessType}</dd>
               </div>
             </dl>
 
-            <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
+            <div className="mt-5 space-y-2.5">
+              {/* Primary SMS Direct Action */}
               <a
-                href="tel:010-9254-8401"
-                className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl border border-orange-400/50 bg-orange-500/15 px-4 py-2.5 text-sm font-semibold text-orange-200 transition-colors hover:bg-orange-500/25 hover:text-white whitespace-nowrap"
+                href={submitted.smsHref}
+                className="inline-flex min-h-[46px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-orange-500 px-4 py-2.5 text-sm font-bold text-white transition-all hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 whitespace-nowrap"
               >
-                <PhoneCall className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="font-mono tabular-nums">010-9254-8401</span>
+                <MessageSquareText className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>대표님께 문자로 바로 전송 ({CONTACT_PHONE})</span>
               </a>
-              <button
-                type="button"
-                onClick={() => setSubmitted(null)}
-                className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 whitespace-nowrap"
-              >
-                확인
-              </button>
+
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleCopyText(submitted.smsBody)}
+                  className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-stone-200 transition-colors hover:border-white/30 hover:bg-white/10 hover:text-white whitespace-nowrap sm:text-sm"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="h-4 w-4 text-orange-400" aria-hidden="true" />
+                      <span>내용 복사됨</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" aria-hidden="true" />
+                      <span>신청 내용 복사</span>
+                    </>
+                  )}
+                </button>
+
+                <a
+                  href={`tel:${CONTACT_PHONE}`}
+                  className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-orange-400/40 bg-orange-500/15 px-3 py-2 text-xs font-semibold text-orange-200 transition-colors hover:bg-orange-500/25 hover:text-white whitespace-nowrap sm:text-sm"
+                >
+                  <PhoneCall className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>바로 전화하기</span>
+                </a>
+              </div>
             </div>
           </div>
         </div>
